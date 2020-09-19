@@ -10,13 +10,14 @@ import org.springframework.batch.core.launch.support.RunIdIncrementer;
 import org.springframework.batch.repeat.RepeatStatus;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 
 import java.time.Instant;
 
-//@Configuration
-public class MultiStepConfiguration {
+@Configuration
+public class MultiStepWithExceptionHandlingConfiguration {
 
-    private static final Logger LOGGER = LoggerFactory.getLogger(MultiStepConfiguration.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(MultiStepWithExceptionHandlingConfiguration.class.getName());
 
     @Autowired
     private JobBuilderFactory jobBuilderFactory;
@@ -24,13 +25,17 @@ public class MultiStepConfiguration {
     @Autowired
     private StepBuilderFactory stepBuilderFactory;
 
+
     @Bean
-    public Job multiStepJob(Step readFromDatabaseStep, Step doANetworkCall, Step updateDatabase) {
+    public Job multiStepJob(Step readFromDatabaseStep, Step doANetworkCall, Step updateDatabase, Step updateFailureAndMarkForRetry) {
         return this.jobBuilderFactory.get("multiStepJob")
                 .incrementer(new RunIdIncrementer())
                 .start(readFromDatabaseStep)
                 .next(doANetworkCall)
-                .next(updateDatabase)
+                .on("FAILED").to(updateFailureAndMarkForRetry)
+                .from(doANetworkCall)
+                .on("*").to(updateDatabase)
+                .end()
                 .build();
     }
 
@@ -50,7 +55,7 @@ public class MultiStepConfiguration {
                 .tasklet((contribution, chunkContext) -> {
                     Thread.sleep(5000);
                     LOGGER.info("Made a network call at " + Instant.now()); // Blocking
-                    return RepeatStatus.FINISHED;
+                    throw new Exception("Read Timeout / Connection Timeout");
                 }).build();
     }
 
@@ -63,5 +68,15 @@ public class MultiStepConfiguration {
                     return RepeatStatus.FINISHED;
                 }).build();
     }
-}
 
+
+    @Bean
+    public Step updateFailureAndMarkForRetry() {
+        return this.stepBuilderFactory.get("updateFailureAndMarkForRetry")
+                .tasklet((contribution, chunkContext) -> {
+                    Thread.sleep(3000);
+                    LOGGER.info("Updated Database for retry at " + Instant.now()); // Blocking
+                    return RepeatStatus.FINISHED;
+                }).build();
+    }
+}
